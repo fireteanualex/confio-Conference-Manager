@@ -13,8 +13,8 @@ const Navbar: React.FC<{ user: User | null; onLogout: () => void }> = ({ user, o
   return (
     <nav className="fixed top-0 left-0 right-0 bg-[#F2F1E8]/80 backdrop-blur-md border-b border-[#2D2926]/10 z-50 h-16 px-6 flex items-center justify-between">
       <Link to="/" className="flex items-center gap-2">
-        <div className="w-8 h-8 border-2 border-[#2D2926] rounded-md flex items-center justify-center font-bold logo-text">C</div>
-        <span className="text-xl font-semibold logo-text tracking-widest">CONFIO</span>
+        <div className="w-12 h-12 border-0 border-[#2D2926] rounded-md flex items-center justify-center font-bold logo-text"><img src='/assets/logos/confio-logo-light.svg'></img></div>
+        <span className="text-xl font-400 logo-text tracking-widest">CONFIO</span>
       </Link>
       
       {user ? (
