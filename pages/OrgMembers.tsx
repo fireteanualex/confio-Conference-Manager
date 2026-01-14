@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { User, Organization, UserRole } from '../types';
 import { db } from '../db';
+import { Trash2 } from 'lucide-react';
 
 const OrgMembers: React.FC<{ user: User }> = ({ user }) => {
   const { id } = useParams();
@@ -11,8 +12,19 @@ const OrgMembers: React.FC<{ user: User }> = ({ user }) => {
   if (!org) return <div className="p-20 text-center font-light">Organization not found</div>;
 
   const owner = db.getUsers().find(u => u.id === org.ownerId);
-  const members = db.getUsers().filter(u => org.memberIds.includes(u.id));
+  const [members, setMembers] = useState (() =>
+    db.getUsers().filter(u => org.memberIds.includes(u.id) && u.id !== org.ownerId)
+  );
 
+  const handleRemoveMember = (memberId: number) => {
+  if(window.confirm("Are you sure you want to remove this member?")) {
+    const updatedMemberIds = org.memberIds.filter(id => id !== memberId);
+    db.updateOrganization(org.id, { memberIds: updatedMemberIds }, user);
+    setMembers(members.filter(m => m.id !== memberId));
+  }
+  return;
+  }
+  
   return (
     <div className="max-w-4xl mx-auto space-y-12 animate-in fade-in duration-500">
       <header className="flex items-center justify-between border-b border-[#2D2926]/10 pb-8">
@@ -53,6 +65,15 @@ const OrgMembers: React.FC<{ user: User }> = ({ user }) => {
                   <p className="text-[10px] text-gray-400">{member.email}</p>
                 </div>
                 <span className="text-[9px] font-bold text-gray-300 uppercase tracking-widest">{member.role}</span>
+                {user.id === org.ownerId && member.id !== org.ownerId && (
+                <button 
+                  onClick={() => handleRemoveMember(member.id)}
+                  className="opacity-1 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 transition-all"
+                  title="Remove Member"
+                >
+                  <Trash2 size={16} />
+                </button>
+              )}
               </div>
             ))}
             {members.length === 0 && (
@@ -63,6 +84,7 @@ const OrgMembers: React.FC<{ user: User }> = ({ user }) => {
       </div>
     </div>
   );
+  
 };
 
 export default OrgMembers;
