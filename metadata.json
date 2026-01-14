@@ -1,0 +1,7 @@
+{
+  "name": "Confio - Conference Platform edition 2",
+  "description": "A scientific conference management platform for managing submissions, peer reviews, and organizations with elegant design and automated reviewer assignment.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
