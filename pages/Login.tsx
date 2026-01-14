@@ -13,29 +13,63 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const remembered = db.getRememberedAccounts();
+  const [quickLoggingIn, setQuickLoggingIn] = useState(false);
+  const remembered = db.getRememberedAccounts().slice(0, 3); // Limit to 3 users
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const foundUser = db.getUsers().find(u => u.email === email);
-    if (foundUser) {
-      if (!foundUser.isConfirmed) {
-        setError('Please confirm your email address before signing in.');
-        return;
+    setError('');
+
+    try {
+      const user = await db.loginUser(email, password);
+
+      // Store user with limited cache (max 3 users)
+      const cachedUsers = JSON.parse(localStorage.getItem('confio_users') || '[]');
+      const existingUserIndex = cachedUsers.findIndex((u: User) => u.email === email);
+
+      if (existingUserIndex >= 0) {
+        cachedUsers[existingUserIndex] = user;
+      } else {
+        cachedUsers.push(user);
+        // Keep only the 3 most recent users
+        if (cachedUsers.length > 3) {
+          cachedUsers.shift(); // Remove oldest user
+        }
       }
+      localStorage.setItem('confio_users', JSON.stringify(cachedUsers));
+
       db.rememberAccount(email);
-      onLogin(foundUser);
+
+      onLogin(user);
       navigate('/dashboard');
-    } else {
-      setError('Invalid credentials');
+    } catch (error: any) {
+      setError(error.message || 'Invalid credentials');
     }
   };
 
-  const handleOAuth = (provider: string) => {
-    alert(`Redirecting to ${provider} OAuth...`);
-    const mockUser = db.getUsers().find(u => u.isConfirmed) || db.getUsers()[0];
-    onLogin(mockUser);
-    navigate('/dashboard');
+  const handleQuickLogin = async (user: User) => {
+    setError('');
+    setQuickLoggingIn(true);
+
+    try {
+      // Fetch fresh user data from server to ensure it's up to date
+      const freshUser = await db.getUserById(user.id);
+      if (freshUser) {
+        onLogin(freshUser);
+        navigate('/dashboard');
+      } else {
+        throw new Error('User not found');
+      }
+    } catch (error: any) {
+      setError('Quick login failed. Please sign in manually.');
+      console.error('Quick login error:', error);
+    } finally {
+      setQuickLoggingIn(false);
+    }
+  };
+
+  const handleOAuth = async (provider: string) => {
+    alert(`${provider} OAuth is not yet implemented. Please use email/password login.`);
   };
 
   return (
@@ -48,29 +82,55 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             <p className="text-[10px] font-bold mb-5 text-gray-400 uppercase tracking-widest text-center">Continue as</p>
             <div className="space-y-3">
               {remembered.map(acc => (
-                <div key={acc.id} className="group relative flex items-center justify-between p-4 border border-[#2D2926]/5 rounded-3xl hover:bg-[#F2F1E8] transition-all">
-                  <button 
-                    onClick={() => { 
-                      if (!acc.isConfirmed) { setError('Account unconfirmed'); return; }
-                      setEmail(acc.email); onLogin(acc); navigate('/dashboard'); 
-                    }}
-                    className="flex items-center gap-4 flex-1 text-left"
+                <div key={acc.id} className="group relative flex items-center justify-between p-4 border border-[#2D2926]/5 rounded-3xl hover:bg-[#F2F1E8] hover:shadow-md transition-all cursor-pointer">
+                  <button
+                    onClick={() => handleQuickLogin(acc)}
+                    disabled={quickLoggingIn}
+                    className="flex items-center gap-4 flex-1 text-left disabled:opacity-50"
                   >
-                    <img src={acc.profilePicture} className="w-12 h-12 rounded-2xl shadow-sm" alt="" />
-                    <div>
+                    <div className="relative">
+                      <img
+                        src={acc.profilePicture || `https://ui-avatars.com/api/?name=${acc.name}+${acc.surname}&background=2D2926&color=F2F1E8`}
+                        className="w-12 h-12 rounded-2xl shadow-sm object-cover"
+                        alt=""
+                      />
+                      {quickLoggingIn && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-2xl">
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1">
                       <p className="font-semibold text-sm">{acc.name} {acc.surname}</p>
                       <p className="text-[10px] text-gray-500">{acc.email}</p>
                     </div>
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path>
+                      </svg>
+                    </div>
                   </button>
-                  <button 
-                    onClick={() => { db.forgetAccount(acc.email); window.location.reload(); }}
-                    className="p-2 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity"
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Remove ${acc.name} ${acc.surname} from this device?`)) {
+                        db.forgetAccount(acc.email);
+                        // Also remove from cached users
+                        const cachedUsers = JSON.parse(localStorage.getItem('confio_users') || '[]');
+                        const updatedCache = cachedUsers.filter((u: User) => u.email !== acc.email);
+                        localStorage.setItem('confio_users', JSON.stringify(updatedCache));
+                        window.location.reload();
+                      }
+                    }}
+                    className="p-2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all ml-2"
+                    title="Remove from device"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                   </button>
                 </div>
               ))}
             </div>
+            <p className="text-[9px] text-gray-400 text-center mt-3 italic">Tap to continue • Stored on this device only • Max 3 users</p>
           </div>
         )}
 

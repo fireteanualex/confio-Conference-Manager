@@ -14,23 +14,35 @@ const Register: React.FC = () => {
     role: UserRole.AUTHOR
   });
   const [step, setStep] = useState<'FORM' | 'CONFIRM'>('FORM');
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    db.registerUser({
-      name: formData.name,
-      surname: formData.surname,
-      email: formData.email,
-      role: formData.role,
-      profilePicture: `https://ui-avatars.com/api/?name=${formData.name}+${formData.surname}&background=2D2926&color=F2F1E8`
-    });
-    setStep('CONFIRM');
+    setError('');
+
+    try {
+      await db.registerUser({
+        name: formData.name,
+        surname: formData.surname,
+        email: formData.email,
+        password: formData.password,
+        role: formData.role,
+        profilePicture: `https://ui-avatars.com/api/?name=${formData.name}+${formData.surname}&background=2D2926&color=F2F1E8`
+      });
+      setStep('CONFIRM');
+    } catch (error: any) {
+      setError(error.message || 'Registration failed');
+    }
   };
 
-  const handleConfirmMock = () => {
-    db.confirmUserEmail(formData.email);
-    alert("Email confirmed! You can now log in.");
-    navigate('/login');
+  const handleConfirmMock = async () => {
+    const success = await db.confirmUserEmail(formData.email);
+    if (success) {
+      alert("Email confirmed! You can now log in.");
+      navigate('/login');
+    } else {
+      alert("Email confirmation failed. Please try again.");
+    }
   };
 
   if (step === 'CONFIRM') {
@@ -103,6 +115,7 @@ const Register: React.FC = () => {
               onChange={e => setFormData({...formData, password: e.target.value})}
             />
           </div>
+          {error && <p className="col-span-2 text-red-400 text-[10px] font-bold uppercase tracking-wide text-center">{error}</p>}
           <button className="col-span-2 py-5 bg-[#2D2926] text-white rounded-[20px] font-semibold hover:opacity-90 transition-opacity mt-4 shadow-xl shadow-black/5">
             CREATE ACCOUNT
           </button>

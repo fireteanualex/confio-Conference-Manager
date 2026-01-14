@@ -3,56 +3,178 @@ import React, { useState, useEffect } from 'react';
 import { User, Conference, Organization, UserRole, OrgInvitation, InvitationStatus, ConferenceType } from '../types';
 import { db } from '../db';
 import { Link } from 'react-router-dom';
+import { compressImage } from '../utils/imageCompression';
+
+// Separate component for conference card to properly use hooks
+const ConferenceCard: React.FC<{ conf: Conference; user: User; onDelete: (e: React.MouseEvent, id: number | string) => void }> = ({ conf, user, onDelete }) => {
+  const [paperCount, setPaperCount] = useState(0);
+
+  useEffect(() => {
+    const loadPaperCount = async () => {
+      const papers = await db.getPapersByConference(conf.id);
+      setPaperCount(papers.length);
+    };
+    loadPaperCount();
+  }, [conf.id]);
+
+  const attendeeCount = (conf.attendeeIds || []).length;
+  const isUpcoming = new Date(conf.start_date) > new Date();
+
+  return (
+    <Link to={`/conference/${conf.id}`} className="group relative bg-white p-10 rounded-[48px] border border-[#2D2926]/5 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300">
+      <div className="flex justify-between items-start mb-8">
+        <div className="flex flex-wrap gap-2">
+          <span className="px-3 py-1 bg-[#F2F1E8] text-[#2D2926] rounded-full text-[9px] font-bold uppercase tracking-widest">
+            {conf.type}
+          </span>
+          <span className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest ${isUpcoming ? 'bg-black text-white' : 'bg-red-500 text-white animate-pulse'}`}>
+            {isUpcoming ? 'Soon' : 'Live'}
+          </span>
+        </div>
+        {String(conf.organizer_id) === String(user.id) && (
+          <button
+            onClick={(e) => onDelete(e, conf.id)}
+            className="p-3 text-gray-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+            title="Remove Meeting"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+          </button>
+        )}
+      </div>
+
+      <div className="mb-6">
+        <h3 className="text-3xl font-light mb-3 group-hover:translate-x-1 transition-transform">{conf.title}</h3>
+        <p className="text-gray-500 text-sm line-clamp-2 leading-relaxed font-light">{conf.description}</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <div className="bg-[#F2F1E8]/40 p-3 rounded-2xl text-center">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mb-1">Submissions</p>
+          <p className="text-lg font-semibold">{paperCount}</p>
+        </div>
+        <div className="bg-[#F2F1E8]/40 p-3 rounded-2xl text-center">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mb-1">Participants</p>
+          <p className="text-lg font-semibold">{attendeeCount}</p>
+        </div>
+        <div className="bg-[#F2F1E8]/40 p-3 rounded-2xl text-center">
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mb-1">Time</p>
+          <p className="text-xs font-semibold mt-1">{conf.start_time}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-8 border-t border-gray-50 gap-4">
+        <div className="text-xs text-gray-400 font-medium">
+          {conf.start_date}
+        </div>
+
+        <div className="flex items-center gap-3">
+          {(conf.type === 'ONLINE' || conf.type === 'HYBRID') && conf.meeting_link && (
+            <a
+              href={conf.meeting_link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="px-6 py-3 bg-[#2D2926] text-white rounded-full text-[10px] font-bold uppercase tracking-widest hover:scale-105 transition-transform"
+            >
+              Join Session
+            </a>
+          )}
+          <span className="text-[10px] font-bold uppercase tracking-widest text-[#2D2926] opacity-40 group-hover:opacity-100 transition-opacity">Details &rarr;</span>
+        </div>
+      </div>
+    </Link>
+  );
+};
 
 const Dashboard: React.FC<{ user: User }> = ({ user }) => {
-  const [organizations, setOrganizations] = useState(db.getOrganizations().filter(o => o.ownerId === user.id || o.memberIds.includes(user.id)));
-  const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [selectedOrgId, setSelectedOrgId] = useState<number | string | null>(null);
   const [conferences, setConferences] = useState<Conference[]>([]);
-  const [invitations, setInvitations] = useState<OrgInvitation[]>(db.getInvitationsForUser(user.id));
-  
+  const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const [showOrgModal, setShowOrgModal] = useState(false);
   const [showConfModal, setShowConfModal] = useState(false);
   const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
   const [invitingToOrg, setInvitingToOrg] = useState<Organization | null>(null);
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
+  const [compressingLogo, setCompressingLogo] = useState(false);
 
   const [newOrg, setNewOrg] = useState({ name: '', logoUrl: '' });
-  const [newConf, setNewConf] = useState({ 
-    title: '', 
-    description: '', 
-    start_date: '', 
-    end_date: '', 
-    start_time: '09:00', 
+  const [newConf, setNewConf] = useState({
+    title: '',
+    description: '',
+    start_date: '',
+    end_date: '',
+    start_time: '09:00',
     end_time: '17:00',
     type: 'OFFLINE' as ConferenceType,
     meeting_link: ''
   });
 
+  // Initial data load
   useEffect(() => {
-    if (selectedOrgId) {
-      setConferences(db.getConferencesByOrg(selectedOrgId));
-    } else {
-      setConferences([]);
-    }
+    refreshData();
+  }, []);
+
+  // Load conferences when org is selected
+  useEffect(() => {
+    const loadConferences = async () => {
+      if (selectedOrgId) {
+        const confs = await db.getConferencesByOrg(selectedOrgId);
+        setConferences(confs);
+      } else {
+        setConferences([]);
+      }
+    };
+    loadConferences();
   }, [selectedOrgId]);
 
-  const refreshData = () => {
-    const orgs = db.getOrganizations().filter(o => o.ownerId === user.id || o.memberIds.includes(user.id));
-    setOrganizations(orgs);
-    setInvitations(db.getInvitationsForUser(user.id));
-    
-    if (selectedOrgId && !orgs.find(o => o.id === selectedOrgId)) {
-      setSelectedOrgId(null);
-      setConferences([]);
-    } else if (selectedOrgId) {
-      setConferences(db.getConferencesByOrg(selectedOrgId));
+  const refreshData = async () => {
+    try {
+      setLoading(true);
+
+      // Ensure user.id exists before making API calls
+      if (!user || !user.id) {
+        console.error('User ID is not available');
+        setLoading(false);
+        return;
+      }
+
+      const [orgs, invites, users] = await Promise.all([
+        db.getOrganizations(),
+        db.getInvitationsForUser(user.id),
+        db.getUsers()
+      ]);
+
+      const userOrgs = orgs.filter(o =>
+        String(o.ownerId) === String(user.id) ||
+        o.memberIds.some(mid => String(mid) === String(user.id))
+      );
+
+      setOrganizations(userOrgs);
+      setInvitations(invites);
+      setAllUsers(users);
+
+      if (selectedOrgId && !userOrgs.find(o => String(o.id) === String(selectedOrgId))) {
+        setSelectedOrgId(null);
+        setConferences([]);
+      } else if (selectedOrgId) {
+        const confs = await db.getConferencesByOrg(selectedOrgId);
+        setConferences(confs);
+      }
+    } catch (error) {
+      console.error('Failed to refresh data:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleCreateOrg = () => {
+  const handleCreateOrg = async () => {
     try {
-      db.createOrganization({ name: newOrg.name, logoUrl: newOrg.logoUrl, ownerId: user.id, memberIds: [] }, user);
-      refreshData();
+      await db.createOrganization({ name: newOrg.name, logoUrl: newOrg.logoUrl, ownerId: user.id, memberIds: [] }, user);
+      await refreshData();
       setShowOrgModal(false);
       setNewOrg({ name: '', logoUrl: '' });
     } catch (e: any) {
@@ -60,11 +182,11 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleUpdateOrg = () => {
+  const handleUpdateOrg = async () => {
     if (editingOrg) {
       try {
-        db.updateOrganization(editingOrg.id, { name: editingOrg.name, logoUrl: editingOrg.logoUrl }, user);
-        refreshData();
+        await db.updateOrganization(editingOrg.id, { name: editingOrg.name, logoUrl: editingOrg.logoUrl }, user);
+        await refreshData();
         setEditingOrg(null);
       } catch (e: any) {
         alert(e.message);
@@ -72,11 +194,11 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleDeleteOrg = () => {
+  const handleDeleteOrg = async () => {
     if (editingOrg && confirm(`Are you sure you want to delete "${editingOrg.name}"? All associated meetings will be lost.`)) {
       try {
-        db.deleteOrganization(editingOrg.id, user);
-        refreshData();
+        await db.deleteOrganization(editingOrg.id, user);
+        await refreshData();
         setEditingOrg(null);
       } catch (e: any) {
         alert(e.message);
@@ -84,22 +206,22 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleCreateConf = () => {
+  const handleCreateConf = async () => {
     if (!selectedOrgId) return;
     try {
-      db.createConference({ 
-        ...newConf, 
-        organizer_id: user.id, 
-        organization_id: selectedOrgId 
+      await db.createConference({
+        ...newConf,
+        organizer_id: user.id,
+        organization_id: selectedOrgId
       }, user);
-      refreshData();
+      await refreshData();
       setShowConfModal(false);
-      setNewConf({ 
-        title: '', 
-        description: '', 
-        start_date: '', 
-        end_date: '', 
-        start_time: '09:00', 
+      setNewConf({
+        title: '',
+        description: '',
+        start_date: '',
+        end_date: '',
+        start_time: '09:00',
         end_time: '17:00',
         type: 'OFFLINE',
         meeting_link: ''
@@ -109,23 +231,23 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleDeleteConf = (e: React.MouseEvent, confId: number) => {
+  const handleDeleteConf = async (e: React.MouseEvent, confId: number | string) => {
     e.preventDefault();
     e.stopPropagation();
     if (confirm('Permanently remove this meeting?')) {
       try {
-        db.deleteConference(confId, user);
-        refreshData();
+        await db.deleteConference(confId, user);
+        await refreshData();
       } catch (e: any) {
         alert(e.message);
       }
     }
   };
 
-  const handleInviteMember = (targetUserId: number) => {
+  const handleInviteMember = async (targetUserId: number | string) => {
     if (invitingToOrg) {
       try {
-        db.createInvitation(invitingToOrg.id, targetUserId, user);
+        await db.createInvitation(invitingToOrg.id, targetUserId, user);
         alert("Invitation sent successfully.");
         setInvitingToOrg(null);
         setMemberSearchQuery('');
@@ -135,38 +257,51 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleRespondInvitation = (inviteId: number, status: InvitationStatus.ACCEPTED | InvitationStatus.DECLINED) => {
+  const handleRespondInvitation = async (inviteId: number | string, status: InvitationStatus.ACCEPTED | InvitationStatus.DECLINED) => {
     try {
-      db.respondToInvitation(inviteId, status, user);
-      refreshData();
+      await db.respondToInvitation(inviteId, status, user);
+      await refreshData();
     } catch (e: any) {
       alert(e.message);
     }
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>, isEditing = false) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>, isEditing = false) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
+      // Check if file is an image
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+
+      setCompressingLogo(true);
+      try {
+        // Compress image before uploading (smaller size for logos)
+        const compressedImage = await compressImage(file, 400, 400, 0.85);
+
         if (isEditing && editingOrg) {
-          setEditingOrg({ ...editingOrg, logoUrl: reader.result as string });
+          setEditingOrg({ ...editingOrg, logoUrl: compressedImage });
         } else {
-          setNewOrg({ ...newOrg, logoUrl: reader.result as string });
+          setNewOrg({ ...newOrg, logoUrl: compressedImage });
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (error) {
+        console.error('Logo compression failed:', error);
+        alert('Failed to process logo. Please try another file.');
+      } finally {
+        setCompressingLogo(false);
+      }
     }
   };
 
   const isOrganizer = user.role === UserRole.ORGANIZER;
 
-  const filteredPotentialInvitees = db.getUsers().filter(u => {
-    const isSelf = u.id === user.id;
-    const isAlreadyMember = invitingToOrg?.memberIds.includes(u.id);
-    const isOwner = invitingToOrg?.ownerId === u.id;
+  const filteredPotentialInvitees = allUsers.filter(u => {
+    const isSelf = String(u.id) === String(user.id);
+    const isAlreadyMember = invitingToOrg?.memberIds.some(mid => String(mid) === String(u.id));
+    const isOwner = String(invitingToOrg?.ownerId) === String(u.id);
     const isConfirmed = u.isConfirmed;
-    
+
     if (isSelf || isAlreadyMember || isOwner || !isConfirmed) return false;
 
     const query = memberSearchQuery.toLowerCase();
@@ -177,17 +312,25 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
     );
   });
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-gray-400 text-lg">Loading...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
-      
+
       {/* Pending Invitations */}
       {invitations.length > 0 && (
         <section className="bg-white border border-[#2D2926]/5 rounded-[40px] p-8 shadow-sm">
           <h2 className="text-xs font-semibold mb-6 uppercase tracking-widest text-gray-400">Pending Invitations</h2>
           <div className="space-y-4">
             {invitations.map(invite => {
-              const org = db.getOrganizations().find(o => o.id === invite.orgId);
-              const sender = db.getUsers().find(u => u.id === invite.invitedByUserId);
+              const org = organizations.find(o => String(o.id) === String(invite.orgId));
+              const sender = allUsers.find(u => String(u.id) === String(invite.invitedByUserId));
               return (
                 <div key={invite.id} className="flex items-center justify-between p-4 bg-[#F2F1E8]/50 rounded-3xl border border-[#2D2926]/5">
                   <div className="flex items-center gap-4">
@@ -200,13 +343,13 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button 
+                    <button
                       onClick={() => handleRespondInvitation(invite.id, InvitationStatus.ACCEPTED)}
                       className="px-6 py-2 bg-[#2D2926] text-white rounded-full text-[10px] font-bold uppercase tracking-widest hover:opacity-90"
                     >
                       Accept
                     </button>
-                    <button 
+                    <button
                       onClick={() => handleRespondInvitation(invite.id, InvitationStatus.DECLINED)}
                       className="px-6 py-2 border border-[#2D2926] rounded-full text-[10px] font-bold uppercase tracking-widest hover:bg-white"
                     >
@@ -227,7 +370,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
         </div>
         {isOrganizer && (
           <div className="flex gap-4">
-            <button 
+            <button
               onClick={() => setShowOrgModal(true)}
               className="px-6 py-2 border border-[#2D2926] rounded-full text-sm font-medium hover:bg-gray-50 transition-colors"
             >
@@ -242,10 +385,10 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
         <h2 className="text-xs font-semibold mb-6 uppercase tracking-widest text-gray-400">Your Organizations</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {organizations.map(org => (
-            <div 
-              key={org.id} 
+            <div
+              key={org.id}
               onClick={() => setSelectedOrgId(org.id)}
-              className={`group cursor-pointer transition-all p-6 rounded-[32px] border ${selectedOrgId === org.id ? 'bg-[#2D2926] border-[#2D2926] text-[#F2F1E8] shadow-2xl' : 'bg-white border-[#2D2926]/5 shadow-sm text-[#2D2926]'} hover:shadow-lg`}
+              className={`group cursor-pointer transition-all p-6 rounded-[32px] border ${String(selectedOrgId) === String(org.id) ? 'bg-[#2D2926] border-[#2D2926] text-[#F2F1E8] shadow-2xl' : 'bg-white border-[#2D2926]/5 shadow-sm text-[#2D2926]'} hover:shadow-lg`}
             >
               <div className="flex items-center gap-4 mb-6">
                 <div className={`w-16 h-16 rounded-2xl flex items-center justify-center font-bold overflow-hidden bg-[#F2F1E8] text-[#2D2926]`}>
@@ -257,31 +400,31 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-lg">{org.name}</h3>
-                  <p className={`text-[10px] font-bold uppercase tracking-widest ${selectedOrgId === org.id ? 'text-[#F2F1E8]/60' : 'text-gray-400'}`}>
-                    {org.ownerId === user.id ? 'My Organization' : 'Member'}
+                  <p className={`text-[10px] font-bold uppercase tracking-widest ${String(selectedOrgId) === String(org.id) ? 'text-[#F2F1E8]/60' : 'text-gray-400'}`}>
+                    {String(org.ownerId) === String(user.id) ? 'My Organization' : 'Member'}
                   </p>
                 </div>
               </div>
               <div className="flex gap-2" onClick={e => e.stopPropagation()}>
-                {org.ownerId === user.id && (
+                {String(org.ownerId) === String(user.id) && (
                   <>
-                    <button 
+                    <button
                       onClick={() => setEditingOrg(org)}
-                      className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-colors ${selectedOrgId === org.id ? 'bg-[#F2F1E8]/10 hover:bg-[#F2F1E8]/20' : 'bg-gray-50 hover:bg-gray-100'}`}
+                      className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-colors ${String(selectedOrgId) === String(org.id) ? 'bg-[#F2F1E8]/10 hover:bg-[#F2F1E8]/20' : 'bg-gray-50 hover:bg-gray-100'}`}
                     >
                       Settings
                     </button>
-                    <button 
+                    <button
                       onClick={() => { setInvitingToOrg(org); setMemberSearchQuery(''); }}
-                      className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-colors ${selectedOrgId === org.id ? 'border-[#F2F1E8]/20 hover:bg-[#F2F1E8]/10' : 'border-[#2D2926]/10 hover:bg-gray-50'}`}
+                      className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-colors ${String(selectedOrgId) === String(org.id) ? 'border-[#F2F1E8]/20 hover:bg-[#F2F1E8]/10' : 'border-[#2D2926]/10 hover:bg-gray-50'}`}
                     >
                       Invite
                     </button>
                   </>
                 )}
-                <Link 
+                <Link
                   to={`/organization/${org.id}/members`}
-                  className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center transition-colors ${selectedOrgId === org.id ? 'bg-[#F2F1E8] text-[#2D2926]' : 'bg-[#F2F1E8]'}`}
+                  className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center transition-colors ${String(selectedOrgId) === String(org.id) ? 'bg-[#F2F1E8] text-[#2D2926]' : 'bg-[#F2F1E8]'}`}
                 >
                   Members
                 </Link>
@@ -300,11 +443,11 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
           <div>
             <h2 className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Meetings & Conferences</h2>
             <h3 className="text-xl font-light">
-              {selectedOrgId ? organizations.find(o => o.id === selectedOrgId)?.name : 'Selection Required'}
+              {selectedOrgId ? organizations.find(o => String(o.id) === String(selectedOrgId))?.name : 'Selection Required'}
             </h3>
           </div>
-          {selectedOrgId && isOrganizer && organizations.find(o => o.id === selectedOrgId)?.ownerId === user.id && (
-            <button 
+          {selectedOrgId && isOrganizer && String(organizations.find(o => String(o.id) === String(selectedOrgId))?.ownerId) === String(user.id) && (
+            <button
               onClick={() => setShowConfModal(true)}
               className="px-6 py-3 bg-[#2D2926] text-white rounded-full text-xs font-bold uppercase tracking-widest hover:opacity-90 transition-opacity shadow-lg shadow-black/10"
             >
@@ -312,79 +455,17 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
             </button>
           )}
         </div>
-        
+
         {selectedOrgId ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            {conferences.map(conf => {
-              const paperCount = db.getPapersByConference(conf.id).length;
-              const attendeeCount = (conf.attendeeIds || []).length;
-              const isUpcoming = new Date(conf.start_date) > new Date();
-
-              return (
-                <Link to={`/conference/${conf.id}`} key={conf.id} className="group relative bg-white p-10 rounded-[48px] border border-[#2D2926]/5 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300">
-                  <div className="flex justify-between items-start mb-8">
-                    <div className="flex flex-wrap gap-2">
-                      <span className="px-3 py-1 bg-[#F2F1E8] text-[#2D2926] rounded-full text-[9px] font-bold uppercase tracking-widest">
-                        {conf.type}
-                      </span>
-                      <span className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest ${isUpcoming ? 'bg-black text-white' : 'bg-red-500 text-white animate-pulse'}`}>
-                        {isUpcoming ? 'Soon' : 'Live'}
-                      </span>
-                    </div>
-                    {conf.organizer_id === user.id && (
-                      <button 
-                        onClick={(e) => handleDeleteConf(e, conf.id)}
-                        className="p-3 text-gray-200 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
-                        title="Remove Meeting"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="mb-6">
-                    <h3 className="text-3xl font-light mb-3 group-hover:translate-x-1 transition-transform">{conf.title}</h3>
-                    <p className="text-gray-500 text-sm line-clamp-2 leading-relaxed font-light">{conf.description}</p>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4 mb-8">
-                    <div className="bg-[#F2F1E8]/40 p-3 rounded-2xl text-center">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mb-1">Submissions</p>
-                      <p className="text-lg font-semibold">{paperCount}</p>
-                    </div>
-                    <div className="bg-[#F2F1E8]/40 p-3 rounded-2xl text-center">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mb-1">Participants</p>
-                      <p className="text-lg font-semibold">{attendeeCount}</p>
-                    </div>
-                    <div className="bg-[#F2F1E8]/40 p-3 rounded-2xl text-center">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mb-1">Time</p>
-                      <p className="text-xs font-semibold mt-1">{conf.start_time}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-8 border-t border-gray-50 gap-4">
-                    <div className="text-xs text-gray-400 font-medium">
-                      {conf.start_date}
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                      {(conf.type === 'ONLINE' || conf.type === 'HYBRID') && conf.meeting_link && (
-                        <a 
-                          href={conf.meeting_link} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-6 py-3 bg-[#2D2926] text-white rounded-full text-[10px] font-bold uppercase tracking-widest hover:scale-105 transition-transform"
-                        >
-                          Join Session
-                        </a>
-                      )}
-                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#2D2926] opacity-40 group-hover:opacity-100 transition-opacity">Details &rarr;</span>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
+            {conferences.map(conf => (
+              <ConferenceCard
+                key={conf.id}
+                conf={conf}
+                user={user}
+                onDelete={handleDeleteConf}
+              />
+            ))}
             {conferences.length === 0 && (
               <div className="col-span-full py-32 text-center border-2 border-dashed border-[#2D2926]/10 rounded-[48px] bg-white/30">
                 <div className="w-16 h-16 bg-[#F2F1E8] rounded-full flex items-center justify-center mx-auto mb-6 text-gray-300">
@@ -415,12 +496,12 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                </button>
             </div>
-            
+
             <div className="space-y-6 mb-10">
               <div>
                 <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-2 mb-2">Organization Name</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   placeholder="Organization Name"
                   className="w-full px-6 py-4 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-2xl focus:outline-none focus:border-[#2D2926] transition-colors font-light"
                   value={editingOrg.name}
@@ -429,10 +510,17 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
               </div>
 
               <div className="flex flex-col items-center gap-3 p-6 border-2 border-dashed border-gray-100 rounded-2xl bg-gray-50/50">
-                <img src={editingOrg.logoUrl || `https://ui-avatars.com/api/?name=${editingOrg.name}`} className="w-24 h-24 rounded-2xl object-cover shadow-sm" alt="Preview" />
-                <label className="cursor-pointer px-4 py-2 text-[9px] font-bold uppercase tracking-widest bg-white border border-gray-100 rounded-full hover:bg-gray-100 transition-colors">
-                  Change Logo
-                  <input type="file" className="hidden" accept="image/*" onChange={e => handleLogoUpload(e, true)} />
+                <div className="relative">
+                  <img src={editingOrg.logoUrl || `https://ui-avatars.com/api/?name=${editingOrg.name}`} className="w-24 h-24 rounded-2xl object-cover shadow-sm" alt="Preview" />
+                  {compressingLogo && (
+                    <div className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center">
+                      <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                  )}
+                </div>
+                <label className={`cursor-pointer px-4 py-2 text-[9px] font-bold uppercase tracking-widest bg-white border border-gray-100 rounded-full transition-colors ${compressingLogo ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100'}`}>
+                  {compressingLogo ? 'Compressing...' : 'Change Logo'}
+                  <input type="file" className="hidden" accept="image/*" onChange={e => handleLogoUpload(e, true)} disabled={compressingLogo} />
                 </label>
               </div>
             </div>
@@ -451,22 +539,29 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
           <div className="bg-white p-10 rounded-[40px] w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
             <h2 className="text-2xl font-light mb-6 logo-text">New Organization</h2>
             <div className="space-y-4 mb-8">
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder="Organization Name"
                 className="w-full px-4 py-4 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-2xl focus:outline-none focus:border-[#2D2926] transition-colors font-light"
                 value={newOrg.name}
                 onChange={e => setNewOrg({ ...newOrg, name: e.target.value })}
               />
               <div className="flex flex-col items-center gap-3 p-4 border-2 border-dashed border-gray-100 rounded-2xl">
-                {newOrg.logoUrl ? (
-                  <img src={newOrg.logoUrl} className="w-20 h-20 rounded-xl object-cover" alt="Preview" />
-                ) : (
-                  <div className="w-20 h-20 bg-gray-50 rounded-xl flex items-center justify-center text-gray-300">LOGO</div>
-                )}
-                <label className="cursor-pointer px-4 py-1 text-[10px] font-bold uppercase tracking-widest bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
-                  Upload Logo
-                  <input type="file" className="hidden" accept="image/*" onChange={e => handleLogoUpload(e)} />
+                <div className="relative">
+                  {newOrg.logoUrl ? (
+                    <img src={newOrg.logoUrl} className="w-20 h-20 rounded-xl object-cover" alt="Preview" />
+                  ) : (
+                    <div className="w-20 h-20 bg-gray-50 rounded-xl flex items-center justify-center text-gray-300">LOGO</div>
+                  )}
+                  {compressingLogo && (
+                    <div className="absolute inset-0 bg-black/40 rounded-xl flex items-center justify-center">
+                      <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                  )}
+                </div>
+                <label className={`cursor-pointer px-4 py-1 text-[10px] font-bold uppercase tracking-widest bg-gray-100 rounded-full transition-colors ${compressingLogo ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-200'}`}>
+                  {compressingLogo ? 'Compressing...' : 'Upload Logo'}
+                  <input type="file" className="hidden" accept="image/*" onChange={e => handleLogoUpload(e)} disabled={compressingLogo} />
                 </label>
               </div>
             </div>
@@ -484,12 +579,12 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
           <div className="bg-white p-8 rounded-[40px] w-full max-w-md shadow-2xl max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
             <h2 className="text-2xl font-light mb-2 logo-text">Invite Member</h2>
             <p className="text-xs text-gray-400 mb-6 uppercase tracking-widest font-bold">To: {invitingToOrg.name}</p>
-            
+
             <div className="relative mb-6">
               <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
               </div>
-              <input 
+              <input
                 type="text"
                 placeholder="Search by name or email..."
                 className="w-full pl-12 pr-4 py-3 bg-[#F2F1E8] border border-[#2D2926]/5 rounded-2xl focus:outline-none focus:border-[#2D2926]/20 font-light text-sm transition-all"
@@ -508,7 +603,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                       <p className="text-[10px] text-gray-400">{u.email}</p>
                     </div>
                   </div>
-                  <button 
+                  <button
                     onClick={() => handleInviteMember(u.id)}
                     className="px-4 py-1.5 bg-[#F2F1E8] rounded-full text-[10px] font-bold uppercase tracking-widest hover:bg-[#2D2926] hover:text-white transition-all"
                   >
@@ -524,8 +619,8 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 </div>
               )}
             </div>
-            <button 
-              onClick={() => { setInvitingToOrg(null); setMemberSearchQuery(''); }} 
+            <button
+              onClick={() => { setInvitingToOrg(null); setMemberSearchQuery(''); }}
               className="mt-8 w-full py-4 border border-gray-100 rounded-2xl text-xs font-bold uppercase tracking-widest hover:bg-gray-50 transition-colors"
             >
               Close
@@ -540,13 +635,13 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
           <div className="bg-white p-10 rounded-[40px] w-full max-w-2xl shadow-2xl my-auto animate-in zoom-in-95 duration-200">
             <h2 className="text-2xl font-light mb-6 logo-text">New Conference / Meeting</h2>
             <div className="space-y-6">
-              <input 
+              <input
                 type="text" placeholder="Meeting Title"
                 className="w-full px-6 py-4 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-2xl focus:outline-none focus:border-[#2D2926] text-lg font-light transition-colors"
                 value={newConf.title}
                 onChange={e => setNewConf({...newConf, title: e.target.value})}
               />
-              <textarea 
+              <textarea
                 placeholder="Description"
                 className="w-full px-6 py-4 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-2xl focus:outline-none h-32 font-light transition-colors"
                 value={newConf.description}
@@ -558,7 +653,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                   <label className="block text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-widest ml-2">Meeting Type</label>
                   <div className="flex gap-4 bg-[#F2F1E8] p-2 rounded-2xl border border-[#2D2926]/5">
                     {['OFFLINE', 'ONLINE', 'HYBRID'].map(t => (
-                      <button 
+                      <button
                         key={t}
                         onClick={() => setNewConf({...newConf, type: t as ConferenceType})}
                         className={`flex-1 py-2 text-[10px] font-bold rounded-xl transition-all ${newConf.type === t ? 'bg-[#2D2926] text-white' : 'text-gray-400 hover:text-black'}`}
@@ -571,7 +666,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 {(newConf.type === 'ONLINE' || newConf.type === 'HYBRID') && (
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-widest ml-2">Meeting Link</label>
-                    <input 
+                    <input
                       type="url" placeholder="https://zoom.us/..."
                       className="w-full px-4 py-2 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-xl focus:outline-none font-light"
                       value={newConf.meeting_link}
@@ -580,12 +675,12 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                   </div>
                 )}
               </div>
-              
+
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-widest ml-2">Start Date</label>
-                    <input 
+                    <input
                       type="date"
                       className="w-full px-4 py-3 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-xl focus:outline-none focus:border-[#2D2926] text-sm font-light cursor-pointer"
                       value={newConf.start_date}
@@ -594,7 +689,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-widest ml-2">Start Time</label>
-                    <input 
+                    <input
                       type="time"
                       className="w-full px-4 py-3 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-xl focus:outline-none focus:border-[#2D2926] text-sm font-light cursor-pointer"
                       value={newConf.start_time}
@@ -606,7 +701,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-widest ml-2">End Date</label>
-                    <input 
+                    <input
                       type="date"
                       className="w-full px-4 py-3 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-xl focus:outline-none focus:border-[#2D2926] text-sm font-light cursor-pointer"
                       value={newConf.end_date}
@@ -615,7 +710,7 @@ const Dashboard: React.FC<{ user: User }> = ({ user }) => {
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-widest ml-2">End Time</label>
-                    <input 
+                    <input
                       type="time"
                       className="w-full px-4 py-3 bg-[#F2F1E8] border border-[#2D2926]/10 rounded-xl focus:outline-none focus:border-[#2D2926] text-sm font-light cursor-pointer"
                       value={newConf.end_time}

@@ -7,28 +7,73 @@ import { db } from '../db';
 const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [conf, setConf] = useState<Conference | undefined>(db.getConferences().find(c => c.id === Number(id)));
-  const [papers, setPapers] = useState<Paper[]>(db.getPapersByConference(Number(id)));
+  const [conf, setConf] = useState<Conference | undefined>();
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteSearchQuery, setInviteSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
 
-  const [editConf, setEditConf] = useState({ 
-    title: conf?.title || '', 
-    description: conf?.description || '',
-    start_date: conf?.start_date || '',
-    end_date: conf?.end_date || '',
-    start_time: conf?.start_time || '09:00',
-    end_time: conf?.end_time || '17:00'
+  const [editConf, setEditConf] = useState({
+    title: '',
+    description: '',
+    start_date: '',
+    end_date: '',
+    start_time: '09:00',
+    end_time: '17:00'
   });
   const [submission, setSubmission] = useState({ title: '', abstract: '', file_url: '' });
 
+  useEffect(() => {
+    loadData();
+  }, [id]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const conferences = await db.getConferences();
+      const conference = conferences.find(c => String(c.id) === String(id));
+
+      if (!conference) {
+        setLoading(false);
+        return;
+      }
+
+      setConf(conference);
+      setEditConf({
+        title: conference.title,
+        description: conference.description,
+        start_date: conference.start_date,
+        end_date: conference.end_date,
+        start_time: conference.start_time || '09:00',
+        end_time: conference.end_time || '17:00'
+      });
+
+      const [conferencePapers, users] = await Promise.all([
+        db.getPapersByConference(conference.id),
+        db.getUsers()
+      ]);
+
+      setPapers(conferencePapers);
+      setAllUsers(users);
+    } catch (error) {
+      console.error('Failed to load conference details:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-20 text-center font-light text-gray-500">Loading...</div>;
+  }
+
   if (!conf) return <div className="p-20 text-center font-light text-gray-500">Conference not found</div>;
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     try {
-      const updated = db.updateConference(conf.id, editConf, user);
+      const updated = await db.updateConference(conf.id, editConf, user);
       if (updated) {
         setConf(updated);
         setIsEditing(false);
@@ -38,10 +83,10 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (confirm('Are you sure you want to delete this meeting?')) {
       try {
-        db.deleteConference(conf.id, user);
+        await db.deleteConference(conf.id, user);
         navigate('/dashboard');
       } catch (e: any) {
         alert(e.message);
@@ -49,12 +94,12 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleInviteUser = (userId: number) => {
+  const handleInviteUser = async (userId: number | string) => {
     const currentAttendees = conf.attendeeIds || [];
-    if (currentAttendees.includes(userId)) return;
-    
+    if (currentAttendees.some(id => String(id) === String(userId))) return;
+
     try {
-      const updated = db.updateConference(conf.id, {
+      const updated = await db.updateConference(conf.id, {
         attendeeIds: [...currentAttendees, userId]
       }, user);
       if (updated) setConf(updated);
@@ -63,10 +108,10 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleRemoveUser = (userId: number) => {
+  const handleRemoveUser = async (userId: number | string) => {
     try {
-      const updated = db.updateConference(conf.id, {
-        attendeeIds: (conf.attendeeIds || []).filter(id => id !== userId)
+      const updated = await db.updateConference(conf.id, {
+        attendeeIds: (conf.attendeeIds || []).filter(id => String(id) !== String(userId))
       }, user);
       if (updated) setConf(updated);
     } catch (e: any) {
@@ -74,14 +119,15 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
-  const handleSubmitPaper = () => {
+  const handleSubmitPaper = async () => {
     try {
-      db.submitPaper({
+      await db.submitPaper({
         ...submission,
         author_id: user.id,
         conference_id: conf.id
       }, user);
-      setPapers(db.getPapersByConference(conf.id));
+      const updatedPapers = await db.getPapersByConference(conf.id);
+      setPapers(updatedPapers);
       setShowSubmitModal(false);
       setSubmission({ title: '', abstract: '', file_url: '' });
       alert('Paper submitted! Reviewers will be assigned shortly.');
@@ -91,15 +137,17 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const isOrganizerRole = user.role === UserRole.ORGANIZER;
-  const isMeetingOrganizer = user.id === conf.organizer_id;
+  const isMeetingOrganizer = String(user.id) === String(conf.organizer_id);
   const canManageMeeting = isOrganizerRole && isMeetingOrganizer;
   const canSubmit = user.role === UserRole.AUTHOR;
 
-  const attendees = db.getUsers().filter(u => (conf.attendeeIds || []).includes(u.id));
-  
-  const availableUsers = db.getUsers().filter(u => {
-    const isAlreadyAttendee = (conf.attendeeIds || []).includes(u.id);
-    const isOrganizerOfMeeting = u.id === conf.organizer_id;
+  const attendees = allUsers.filter(u =>
+    (conf.attendeeIds || []).some(id => String(id) === String(u.id))
+  );
+
+  const availableUsers = allUsers.filter(u => {
+    const isAlreadyAttendee = (conf.attendeeIds || []).some(id => String(id) === String(u.id));
+    const isOrganizerOfMeeting = String(u.id) === String(conf.organizer_id);
     if (isAlreadyAttendee || isOrganizerOfMeeting) return false;
 
     const query = inviteSearchQuery.toLowerCase();
