@@ -15,6 +15,9 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteSearchQuery, setInviteSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showAssignReviewerModal, setShowAssignReviewerModal] = useState(false);
+  const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
+  const [reviewerSearchQuery, setReviewerSearchQuery] = useState('');
 
   const [editConf, setEditConf] = useState({
     title: '',
@@ -26,6 +29,42 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
   });
   const [submission, setSubmission] = useState({ title: '', abstract: '', file_url: '' });
 
+  // All hooks must be called before any conditional returns (Rules of Hooks)
+  const availableReviewers = React.useMemo(() => {
+    return allUsers.filter(u => {
+      if (u.role !== UserRole.REVIEWER) return false;
+
+      // Filter by search query
+      const query = reviewerSearchQuery.toLowerCase();
+      return (
+        u.name.toLowerCase().includes(query) ||
+        u.surname.toLowerCase().includes(query) ||
+        u.email.toLowerCase().includes(query)
+      );
+    });
+  }, [allUsers, reviewerSearchQuery]);
+
+  const attendees = React.useMemo(() => {
+    return allUsers.filter(u =>
+      (conf?.attendeeIds || []).some(id => String(id) === String(u.id))
+    );
+  }, [allUsers, conf]);
+
+  const availableUsers = React.useMemo(() => {
+    return allUsers.filter(u => {
+      const isAlreadyAttendee = (conf?.attendeeIds || []).some(id => String(id) === String(u.id));
+      const isOrganizerOfMeeting = conf && String(u.id) === String(conf.organizer_id);
+      if (isAlreadyAttendee || isOrganizerOfMeeting) return false;
+
+      const query = inviteSearchQuery.toLowerCase();
+      return (
+        u.name.toLowerCase().includes(query) ||
+        u.surname.toLowerCase().includes(query) ||
+        u.email.toLowerCase().includes(query)
+      );
+    });
+  }, [allUsers, conf, inviteSearchQuery]);
+
   useEffect(() => {
     loadData();
   }, [id]);
@@ -33,10 +72,16 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
   const loadData = async () => {
     try {
       setLoading(true);
+      console.log('Loading conference with id:', id);
+
       const conferences = await db.getConferences();
+      console.log('Fetched conferences:', conferences);
+
       const conference = conferences.find(c => String(c.id) === String(id));
+      console.log('Found conference:', conference);
 
       if (!conference) {
+        console.warn('Conference not found for id:', id);
         setLoading(false);
         return;
       }
@@ -56,10 +101,14 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
         db.getUsers()
       ]);
 
+      console.log('Loaded papers:', conferencePapers);
+      console.log('Loaded users:', users);
+
       setPapers(conferencePapers);
       setAllUsers(users);
     } catch (error) {
       console.error('Failed to load conference details:', error);
+      alert('Failed to load conference details. Please check the console for more information.');
     } finally {
       setLoading(false);
     }
@@ -136,27 +185,50 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
     }
   };
 
+  const handleAssignReviewer = async (reviewerId: number | string) => {
+    if (!selectedPaper) return;
+    try {
+      await db.assignReviewerToPaper(selectedPaper.id, reviewerId, user);
+      const updatedPapers = await db.getPapersByConference(conf.id);
+      setPapers(updatedPapers);
+      const updatedPaper = updatedPapers.find(p => p.id === selectedPaper.id);
+      if (updatedPaper) setSelectedPaper(updatedPaper);
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+
+  const handleRemoveReviewer = async (paperId: number | string, reviewerId: number | string) => {
+    try {
+      await db.removeReviewerFromPaper(paperId, reviewerId, user);
+      const updatedPapers = await db.getPapersByConference(conf.id);
+      setPapers(updatedPapers);
+      if (selectedPaper && selectedPaper.id === paperId) {
+        const updatedPaper = updatedPapers.find(p => p.id === paperId);
+        if (updatedPaper) setSelectedPaper(updatedPaper);
+      }
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+
+  const openAssignReviewerModal = (paper: Paper) => {
+    setSelectedPaper(paper);
+    setReviewerSearchQuery('');
+    setShowAssignReviewerModal(true);
+  };
+
   const isOrganizerRole = user.role === UserRole.ORGANIZER;
   const isMeetingOrganizer = String(user.id) === String(conf.organizer_id);
   const canManageMeeting = isOrganizerRole && isMeetingOrganizer;
   const canSubmit = user.role === UserRole.AUTHOR;
 
-  const attendees = allUsers.filter(u =>
-    (conf.attendeeIds || []).some(id => String(id) === String(u.id))
-  );
-
-  const availableUsers = allUsers.filter(u => {
-    const isAlreadyAttendee = (conf.attendeeIds || []).some(id => String(id) === String(u.id));
-    const isOrganizerOfMeeting = String(u.id) === String(conf.organizer_id);
-    if (isAlreadyAttendee || isOrganizerOfMeeting) return false;
-
-    const query = inviteSearchQuery.toLowerCase();
-    return (
-      u.name.toLowerCase().includes(query) ||
-      u.surname.toLowerCase().includes(query) ||
-      u.email.toLowerCase().includes(query)
+  const getAssignedReviewers = (paper: Paper) => {
+    if (!paper.reviewer_ids || paper.reviewer_ids.length === 0) return [];
+    return allUsers.filter(u =>
+      paper.reviewer_ids?.some(id => String(id) === String(u.id))
     );
-  });
+  };
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto animate-in fade-in duration-500 pb-20">
@@ -271,17 +343,55 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
             </div>
             
             <div className="space-y-4">
-              {papers.length > 0 ? papers.map(paper => (
-                <div key={paper.id} className="bg-white p-6 rounded-3xl border border-gray-100 flex items-center justify-between hover:shadow-md transition-all">
-                  <div>
-                    <h4 className="font-semibold mb-1">{paper.title}</h4>
-                    <p className="text-xs text-gray-400">Version {paper.version} • Status: <span className="font-bold text-[#2D2926] uppercase tracking-widest text-[9px]">{paper.status}</span></p>
+              {papers.length > 0 ? papers.map(paper => {
+                const assignedReviewers = getAssignedReviewers(paper);
+                return (
+                  <div key={paper.id} className="bg-white p-6 rounded-3xl border border-gray-100 hover:shadow-md transition-all">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex-1">
+                        <h4 className="font-semibold mb-1">{paper.title}</h4>
+                        <p className="text-xs text-gray-400">Version {paper.version} • Status: <span className="font-bold text-[#2D2926] uppercase tracking-widest text-[9px]">{paper.status}</span></p>
+                      </div>
+                      <button className="p-3 hover:bg-gray-50 rounded-2xl transition-colors text-gray-400 hover:text-black">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                      </button>
+                    </div>
+
+                    {/* Assigned Reviewers Section */}
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Assigned Reviewers ({assignedReviewers.length})</h5>
+                        {canManageMeeting && (
+                          <button
+                            onClick={() => openAssignReviewerModal(paper)}
+                            className="px-3 py-1 bg-[#F2F1E8] rounded-full text-[9px] font-bold uppercase tracking-widest hover:bg-[#2D2926] hover:text-white transition-all"
+                          >
+                            + Assign
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {assignedReviewers.length > 0 ? assignedReviewers.map(reviewer => (
+                          <div key={reviewer.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-100">
+                            <img src={reviewer.profilePicture || `https://ui-avatars.com/api/?name=${reviewer.name}`} className="w-5 h-5 rounded-full object-cover" alt="" />
+                            <span className="text-xs font-medium">{reviewer.name} {reviewer.surname}</span>
+                            {canManageMeeting && (
+                              <button
+                                onClick={() => handleRemoveReviewer(paper.id, reviewer.id)}
+                                className="text-gray-400 hover:text-red-500 transition-colors"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                              </button>
+                            )}
+                          </div>
+                        )) : (
+                          <p className="text-xs text-gray-400 italic">No reviewers assigned yet</p>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <button className="p-3 hover:bg-gray-50 rounded-2xl transition-colors text-gray-400 hover:text-black">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-                  </button>
-                </div>
-              )) : (
+                );
+              }) : (
                 <div className="text-center py-16 border-2 border-dashed border-gray-100 rounded-[40px] bg-white/30">
                   <p className="text-gray-400 text-xs font-medium uppercase tracking-widest">No papers submitted yet.</p>
                 </div>
@@ -379,13 +489,13 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
           <div className="bg-white p-10 rounded-[40px] w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-200">
             <h2 className="text-2xl font-light mb-6 logo-text">Submit Paper</h2>
             <div className="space-y-4">
-              <input 
+              <input
                 type="text" placeholder="Paper Title"
                 className="w-full px-4 py-3 bg-[#F2F1E8]/30 border border-[#2D2926]/10 rounded-xl focus:outline-none transition-colors font-light"
                 value={submission.title}
                 onChange={e => setSubmission({...submission, title: e.target.value})}
               />
-              <textarea 
+              <textarea
                 placeholder="Abstract"
                 className="w-full px-4 py-3 bg-[#F2F1E8]/30 border border-[#2D2926]/10 rounded-xl focus:outline-none h-32 transition-colors font-light"
                 value={submission.abstract}
@@ -400,6 +510,91 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
               <button onClick={() => setShowSubmitModal(false)} className="flex-1 py-4 text-xs font-bold uppercase tracking-widest hover:text-black transition-colors">Cancel</button>
               <button onClick={handleSubmitPaper} className="flex-1 py-4 bg-[#2D2926] text-white rounded-2xl font-semibold hover:opacity-90 transition-opacity">SUBMIT</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Reviewer Modal */}
+      {showAssignReviewerModal && selectedPaper && (
+        <div className="fixed inset-0 bg-[#2D2926]/20 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+          <div className="bg-white p-8 rounded-[40px] w-full max-w-md shadow-2xl max-h-[80vh] flex flex-col animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-light mb-2 logo-text">Assign Reviewers</h2>
+            <p className="text-sm text-gray-500 mb-6">Paper: <span className="font-semibold">{selectedPaper.title}</span></p>
+
+            <div className="relative mb-6">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+              </div>
+              <input
+                type="text"
+                placeholder="Search reviewers by name or email..."
+                className="w-full pl-12 pr-4 py-3 bg-[#F2F1E8] border border-[#2D2926]/5 rounded-2xl focus:outline-none focus:border-[#2D2926]/20 font-light text-sm transition-all"
+                value={reviewerSearchQuery}
+                onChange={(e) => setReviewerSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {/* Currently Assigned Reviewers */}
+            {getAssignedReviewers(selectedPaper).length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Currently Assigned</h3>
+                <div className="space-y-2">
+                  {getAssignedReviewers(selectedPaper).map(reviewer => (
+                    <div key={reviewer.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-2xl border border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <img src={reviewer.profilePicture || `https://ui-avatars.com/api/?name=${reviewer.name}`} className="w-8 h-8 rounded-full object-cover" alt="" />
+                        <div>
+                          <p className="text-sm font-semibold">{reviewer.name} {reviewer.surname}</p>
+                          <p className="text-[10px] text-gray-400">{reviewer.email}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRemoveReviewer(selectedPaper.id, reviewer.id)}
+                        className="p-2 text-gray-300 hover:text-red-400 transition-colors"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Available Reviewers */}
+            <div className="overflow-y-auto flex-1 space-y-2 pr-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Available Reviewers</h3>
+              {availableReviewers.filter(r =>
+                !getAssignedReviewers(selectedPaper).some(ar => ar.id === r.id)
+              ).map(reviewer => (
+                <div key={reviewer.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-2xl border border-transparent hover:border-gray-100 transition-all">
+                  <div className="flex items-center gap-3">
+                    <img src={reviewer.profilePicture || `https://ui-avatars.com/api/?name=${reviewer.name}`} className="w-8 h-8 rounded-full object-cover" alt="" />
+                    <div>
+                      <p className="text-sm font-semibold">{reviewer.name} {reviewer.surname}</p>
+                      <p className="text-[10px] text-gray-400">{reviewer.email}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleAssignReviewer(reviewer.id)}
+                    className="px-4 py-1.5 bg-[#F2F1E8] rounded-full text-[10px] font-bold uppercase tracking-widest hover:bg-[#2D2926] hover:text-white transition-all"
+                  >
+                    Assign
+                  </button>
+                </div>
+              ))}
+              {availableReviewers.filter(r =>
+                !getAssignedReviewers(selectedPaper).some(ar => ar.id === r.id)
+              ).length === 0 && (
+                <p className="text-center text-xs text-gray-400 py-8 italic">No available reviewers found</p>
+              )}
+            </div>
+
+            <button
+              onClick={() => { setShowAssignReviewerModal(false); setReviewerSearchQuery(''); }}
+              className="mt-8 w-full py-4 border border-gray-100 rounded-2xl text-xs font-bold uppercase tracking-widest hover:bg-gray-50 transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}

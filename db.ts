@@ -225,7 +225,7 @@ class DB {
   async getConferencesByOrg(orgId: number | string): Promise<Conference[]> {
     try {
       const allConferences = await this.getConferences();
-      return allConferences.filter(c => c.organization_id === orgId);
+      return allConferences.filter(c => String(c.organization_id) === String(orgId));
     } catch (error) {
       console.error('Failed to fetch conferences by org:', error);
       return [];
@@ -306,6 +306,74 @@ class DB {
     }
   }
 
+  async assignReviewerToPaper(paperId: number | string, reviewerId: number | string, caller: User): Promise<Paper | undefined> {
+    if (caller.role !== UserRole.ORGANIZER) {
+      throw new Error("Unauthorized: Only Organizers can assign reviewers.");
+    }
+    try {
+      // Get current paper and conference
+      const papers = await api.get('/papers');
+      const paper = papers.data.find((p: Paper) => String(p.id) === String(paperId));
+      if (!paper) {
+        throw new Error("Paper not found");
+      }
+
+      const conferences = await this.getConferences();
+      const conference = conferences.find((c: Conference) => String(c.id) === String(paper.conference_id));
+      if (!conference || !conference.organization_id) {
+        throw new Error("Conference or organization not found");
+      }
+
+      // Verify reviewer is in the same organization
+      const reviewer = await this.getUserById(reviewerId);
+      if (!reviewer || reviewer.role !== UserRole.REVIEWER) {
+        throw new Error("Reviewer not found or invalid role");
+      }
+
+      const org = await this.getOrganizationById(conference.organization_id);
+      if (!org || !org.memberIds.includes(Number(reviewerId))) {
+        throw new Error("Reviewer is not a member of the conference organization");
+      }
+
+      // Add reviewer to the paper's reviewer list
+      const currentReviewers = paper.reviewer_ids || [];
+      if (currentReviewers.some((id: number) => String(id) === String(reviewerId))) {
+        throw new Error("Reviewer already assigned to this paper");
+      }
+
+      const updatedReviewers = [...currentReviewers, reviewerId];
+      return await this.updatePaper(paperId, {
+        reviewer_ids: updatedReviewers,
+        status: PaperStatus.UNDER_REVIEW
+      });
+    } catch (error: any) {
+      console.error('Failed to assign reviewer:', error);
+      throw new Error(error.message || 'Failed to assign reviewer');
+    }
+  }
+
+  async removeReviewerFromPaper(paperId: number | string, reviewerId: number | string, caller: User): Promise<Paper | undefined> {
+    if (caller.role !== UserRole.ORGANIZER) {
+      throw new Error("Unauthorized: Only Organizers can remove reviewers.");
+    }
+    try {
+      const papers = await api.get('/papers');
+      const paper = papers.data.find((p: Paper) => String(p.id) === String(paperId));
+      if (!paper) {
+        throw new Error("Paper not found");
+      }
+
+      const updatedReviewers = (paper.reviewer_ids || []).filter(
+        (id: number) => String(id) !== String(reviewerId)
+      );
+
+      return await this.updatePaper(paperId, { reviewer_ids: updatedReviewers });
+    } catch (error: any) {
+      console.error('Failed to remove reviewer:', error);
+      throw new Error(error.message || 'Failed to remove reviewer');
+    }
+  }
+
   // ==================== REVIEW MANAGEMENT ====================
 
   async getReviewsByPaper(paperId: number | string): Promise<Review[]> {
@@ -338,6 +406,18 @@ class DB {
     } catch (error) {
       console.error('Failed to update review:', error);
       throw error;
+    }
+  }
+
+  async getPapersAssignedToReviewer(reviewerId: number | string): Promise<Paper[]> {
+    try {
+      const papers = await api.get('/papers');
+      return papers.data.filter((p: Paper) =>
+        p.reviewer_ids && p.reviewer_ids.some(id => String(id) === String(reviewerId))
+      );
+    } catch (error) {
+      console.error('Failed to fetch assigned papers:', error);
+      return [];
     }
   }
 }

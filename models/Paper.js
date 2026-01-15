@@ -32,6 +32,11 @@ const paperSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Conference',
     required: true
+  },
+  reviewer_ids: {
+    type: [mongoose.Schema.Types.ObjectId],
+    ref: 'User',
+    default: []
   }
 }, {
   timestamps: true

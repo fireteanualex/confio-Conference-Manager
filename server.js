@@ -464,7 +464,8 @@ app.get('/api/papers', async (req, res) => {
       version: paper.version,
       status: paper.status,
       author_id: paper.author_id,
-      conference_id: paper.conference_id
+      conference_id: paper.conference_id,
+      reviewer_ids: paper.reviewer_ids || []
     }));
     res.json(papersResponse);
   } catch (error) {
@@ -485,7 +486,8 @@ app.get('/api/papers/conference/:conferenceId', async (req, res) => {
       version: paper.version,
       status: paper.status,
       author_id: paper.author_id,
-      conference_id: paper.conference_id
+      conference_id: paper.conference_id,
+      reviewer_ids: paper.reviewer_ids || []
     }));
     res.json(papersResponse);
   } catch (error) {
@@ -508,7 +510,8 @@ app.post('/api/papers', async (req, res) => {
       version: newPaper.version,
       status: newPaper.status,
       author_id: newPaper.author_id,
-      conference_id: newPaper.conference_id
+      conference_id: newPaper.conference_id,
+      reviewer_ids: newPaper.reviewer_ids || []
     });
   } catch (error) {
     console.error('Submit paper error:', error);
@@ -537,7 +540,8 @@ app.put('/api/papers/:id', async (req, res) => {
       version: paper.version,
       status: paper.status,
       author_id: paper.author_id,
-      conference_id: paper.conference_id
+      conference_id: paper.conference_id,
+      reviewer_ids: paper.reviewer_ids || []
     });
   } catch (error) {
     console.error('Update paper error:', error);

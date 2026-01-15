@@ -1,13 +1,14 @@
 
 import React, { useState } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
-import { User } from './types';
+import { User, UserRole } from './types';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Profile from './pages/Profile';
 import ConferenceDetail from './pages/ConferenceDetail';
 import OrgMembers from './pages/OrgMembers';
+import ReviewerDashboard from './pages/ReviewerDashboard';
 
 const Navbar: React.FC<{ user: User | null; onLogout: () => void }> = ({ user, onLogout }) => {
   return (
@@ -20,15 +21,18 @@ const Navbar: React.FC<{ user: User | null; onLogout: () => void }> = ({ user, o
       {user ? (
         <div className="flex items-center gap-6">
           <Link to="/dashboard" className="hover:text-gray-600 transition-colors font-light">Dashboard</Link>
+          {user.role === UserRole.REVIEWER && (
+            <Link to="/reviewer" className="hover:text-gray-600 transition-colors font-light">My Reviews</Link>
+          )}
           <Link to="/profile" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
-            <img 
-              src={user.profilePicture || `https://ui-avatars.com/api/?name=${user.name}+${user.surname}&background=2D2926&color=F2F1E8`} 
-              alt="Profile" 
+            <img
+              src={user.profilePicture || `https://ui-avatars.com/api/?name=${user.name}+${user.surname}&background=2D2926&color=F2F1E8`}
+              alt="Profile"
               className="w-8 h-8 rounded-full border border-[#2D2926]/20 object-cover"
             />
             <span className="font-light">{user.name}</span>
           </Link>
-          <button 
+          <button
             onClick={onLogout}
             className="px-4 py-1 border border-[#2D2926] rounded-full text-xs hover:bg-[#2D2926] hover:text-white transition-all font-semibold"
           >
@@ -74,6 +78,7 @@ const App: React.FC = () => {
             <Route path="/profile" element={user ? <Profile user={user} onUpdate={handleLogin} /> : <Navigate to="/login" />} />
             <Route path="/conference/:id" element={user ? <ConferenceDetail user={user} /> : <Navigate to="/login" />} />
             <Route path="/organization/:id/members" element={user ? <OrgMembers user={user} /> : <Navigate to="/login" />} />
+            <Route path="/reviewer" element={user ? <ReviewerDashboard user={user} /> : <Navigate to="/login" />} />
           </Routes>
         </main>
       </div>
