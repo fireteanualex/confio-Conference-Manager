@@ -167,14 +167,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           <div className="h-[1px] flex-1 bg-current"></div>
         </div>
 
-        <div className="mt-10 grid grid-cols-2 gap-4">
+        <div className="mt-10 grid grid-cols-1 gap-4">
           <button onClick={() => handleOAuth('Google')} className="flex items-center justify-center py-4 border border-[#2D2926]/5 rounded-2xl hover:bg-gray-50 transition-colors">
             <img src="https://www.svgrepo.com/show/355037/google.svg" className="w-5 h-5 mr-3" alt="" />
             <span className="text-[10px] font-bold">GOOGLE</span>
-          </button>
-          <button onClick={() => handleOAuth('GitHub')} className="flex items-center justify-center py-4 border border-[#2D2926]/5 rounded-2xl hover:bg-gray-50 transition-colors">
-            <img src="https://www.svgrepo.com/show/353782/github-icon.svg" className="w-5 h-5 mr-3" alt="" />
-            <span className="text-[10px] font-bold">GITHUB</span>
           </button>
         </div>
 
