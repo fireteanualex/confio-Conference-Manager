@@ -137,6 +137,107 @@ app.post('/api/confirm-email', async (req, res) => {
   }
 });
 
+// Google OAuth login/register
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { credential, role } = req.body;
+
+    // Verify the Google ID token
+    const { OAuth2Client } = require('google-auth-library');
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID
+    });
+
+    const payload = ticket.getPayload();
+    const { sub: googleId, email, given_name, family_name, picture } = payload;
+
+    // Check if user exists with this Google ID
+    let user = await User.findOne({ googleId });
+
+    if (user) {
+      // Existing Google user - log them in
+      const userResponse = {
+        id: user._id,
+        name: user.name,
+        surname: user.surname,
+        email: user.email,
+        role: user.role,
+        profilePicture: user.profilePicture,
+        isConfirmed: user.isConfirmed,
+        authProvider: user.authProvider
+      };
+      return res.json(userResponse);
+    }
+
+    // Check if user exists with this email (local account)
+    user = await User.findOne({ email });
+
+    if (user) {
+      // Link Google account to existing local account
+      user.googleId = googleId;
+      user.authProvider = 'google';
+      if (picture && !user.profilePicture) {
+        user.profilePicture = picture;
+      }
+      await user.save();
+
+      const userResponse = {
+        id: user._id,
+        name: user.name,
+        surname: user.surname,
+        email: user.email,
+        role: user.role,
+        profilePicture: user.profilePicture,
+        isConfirmed: user.isConfirmed,
+        authProvider: user.authProvider
+      };
+      return res.json(userResponse);
+    }
+
+    // New user - create account
+    // Role is required for new users
+    if (!role) {
+      return res.status(400).json({
+        error: 'Role required for new users',
+        needsRole: true,
+        googleData: { email, given_name, family_name, picture }
+      });
+    }
+
+    const newUser = new User({
+      name: given_name || 'User',
+      surname: family_name || '',
+      email,
+      googleId,
+      role,
+      profilePicture: picture || `https://ui-avatars.com/api/?name=${given_name}+${family_name}&background=2D2926&color=F2F1E8`,
+      isConfirmed: true, // Google accounts are auto-confirmed
+      authProvider: 'google'
+    });
+
+    await newUser.save();
+
+    const userResponse = {
+      id: newUser._id,
+      name: newUser.name,
+      surname: newUser.surname,
+      email: newUser.email,
+      role: newUser.role,
+      profilePicture: newUser.profilePicture,
+      isConfirmed: newUser.isConfirmed,
+      authProvider: newUser.authProvider
+    };
+
+    res.status(201).json(userResponse);
+  } catch (error) {
+    console.error('Google OAuth error:', error);
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+});
+
 // ==================== USER ROUTES ====================
 
 // Get all users

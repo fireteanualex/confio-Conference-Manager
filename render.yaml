@@ -1,0 +1,19 @@
+services:
+  # Full-stack web service (backend + frontend)
+  - type: web
+    name: confio
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false  # Set this manually in Render dashboard
+      - key: GOOGLE_CLIENT_ID
+        sync: false  # Set this manually in Render dashboard
+      - key: VITE_GOOGLE_CLIENT_ID
+        sync: false  # Set this manually in Render dashboard
+      - key: VITE_API_URL
+        value: /api  # Use relative path since frontend and backend are on same domain

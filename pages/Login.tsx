@@ -1,8 +1,39 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { db } from '../db';
-import { User } from '../types';
+import { User, UserRole } from '../types';
+
+// Google Identity Services types
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string;
+            callback: (response: { credential: string }) => void;
+          }) => void;
+          renderButton: (
+            element: HTMLElement,
+            config: {
+              theme?: 'outline' | 'filled_blue' | 'filled_black';
+              size?: 'large' | 'medium' | 'small';
+              type?: 'standard' | 'icon';
+              text?: 'signin_with' | 'signup_with' | 'continue_with' | 'signin';
+              shape?: 'rectangular' | 'pill' | 'circle' | 'square';
+              logo_alignment?: 'left' | 'center';
+              width?: number;
+            }
+          ) => void;
+          prompt: () => void;
+        };
+      };
+    };
+  }
+}
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 interface LoginProps {
   onLogin: (user: User) => void;
@@ -14,7 +45,116 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [quickLoggingIn, setQuickLoggingIn] = useState(false);
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const remembered = db.getRememberedAccounts().slice(0, 3); // Limit to 3 users
+
+  // Load Google Identity Services script
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) {
+      console.warn('Google Client ID not configured');
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = initializeGoogleSignIn;
+    document.body.appendChild(script);
+
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
+
+  const initializeGoogleSignIn = () => {
+    if (window.google && GOOGLE_CLIENT_ID) {
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: handleGoogleCallback,
+      });
+
+      const buttonContainer = document.getElementById('google-signin-button');
+      if (buttonContainer) {
+        window.google.accounts.id.renderButton(buttonContainer, {
+          theme: 'outline',
+          size: 'large',
+          type: 'standard',
+          text: 'signin_with',
+          shape: 'rectangular',
+          width: 300,
+        });
+      }
+    }
+  };
+
+  const handleGoogleCallback = async (response: { credential: string }) => {
+    setError('');
+    setGoogleLoading(true);
+
+    try {
+      const result = await db.loginWithGoogle(response.credential);
+
+      // Check if we need to ask for role (new user)
+      if ('needsRole' in result && result.needsRole) {
+        setPendingGoogleCredential(response.credential);
+        setShowRoleModal(true);
+        setGoogleLoading(false);
+        return;
+      }
+
+      // Successful login
+      const user = result as User;
+      handleSuccessfulLogin(user);
+    } catch (error: any) {
+      setError(error.message || 'Google authentication failed');
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleRoleSelection = async (role: UserRole) => {
+    if (!pendingGoogleCredential) return;
+
+    setGoogleLoading(true);
+    setShowRoleModal(false);
+
+    try {
+      const result = await db.loginWithGoogle(pendingGoogleCredential, role);
+
+      if ('id' in result) {
+        handleSuccessfulLogin(result as User);
+      } else {
+        throw new Error('Failed to create account');
+      }
+    } catch (error: any) {
+      setError(error.message || 'Failed to create account');
+      setGoogleLoading(false);
+    } finally {
+      setPendingGoogleCredential(null);
+    }
+  };
+
+  const handleSuccessfulLogin = (user: User) => {
+    // Store user with limited cache (max 3 users)
+    const cachedUsers = JSON.parse(localStorage.getItem('confio_users') || '[]');
+    const existingUserIndex = cachedUsers.findIndex((u: User) => u.email === user.email);
+
+    if (existingUserIndex >= 0) {
+      cachedUsers[existingUserIndex] = user;
+    } else {
+      cachedUsers.push(user);
+      if (cachedUsers.length > 3) {
+        cachedUsers.shift();
+      }
+    }
+    localStorage.setItem('confio_users', JSON.stringify(cachedUsers));
+    db.rememberAccount(user.email);
+
+    onLogin(user);
+    navigate('/dashboard');
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,26 +162,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     try {
       const user = await db.loginUser(email, password);
-
-      // Store user with limited cache (max 3 users)
-      const cachedUsers = JSON.parse(localStorage.getItem('confio_users') || '[]');
-      const existingUserIndex = cachedUsers.findIndex((u: User) => u.email === email);
-
-      if (existingUserIndex >= 0) {
-        cachedUsers[existingUserIndex] = user;
-      } else {
-        cachedUsers.push(user);
-        // Keep only the 3 most recent users
-        if (cachedUsers.length > 3) {
-          cachedUsers.shift(); // Remove oldest user
-        }
-      }
-      localStorage.setItem('confio_users', JSON.stringify(cachedUsers));
-
-      db.rememberAccount(email);
-
-      onLogin(user);
-      navigate('/dashboard');
+      handleSuccessfulLogin(user);
     } catch (error: any) {
       setError(error.message || 'Invalid credentials');
     }
@@ -66,10 +187,6 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     } finally {
       setQuickLoggingIn(false);
     }
-  };
-
-  const handleOAuth = async (provider: string) => {
-    alert(`${provider} OAuth is not yet implemented. Please use email/password login.`);
   };
 
   return (
@@ -167,17 +284,71 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           <div className="h-[1px] flex-1 bg-current"></div>
         </div>
 
-        <div className="mt-10 grid grid-cols-1 gap-4">
-          <button onClick={() => handleOAuth('Google')} className="flex items-center justify-center py-4 border border-[#2D2926]/5 rounded-2xl hover:bg-gray-50 transition-colors">
-            <img src="https://www.svgrepo.com/show/355037/google.svg" className="w-5 h-5 mr-3" alt="" />
-            <span className="text-[10px] font-bold">GOOGLE</span>
-          </button>
+        <div className="mt-10 flex justify-center">
+          {GOOGLE_CLIENT_ID ? (
+            <div className="relative">
+              {googleLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/80 rounded-2xl z-10">
+                  <div className="w-5 h-5 border-2 border-[#2D2926] border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
+              <div id="google-signin-button"></div>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">Google Sign-In not configured</p>
+          )}
         </div>
 
         <p className="mt-12 text-center text-sm text-gray-500 font-light">
           New to Confio? <Link to="/register" className="text-[#2D2926] font-semibold">Join now</Link>
         </p>
       </div>
+
+      {/* Role Selection Modal for new Google users */}
+      {showRoleModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in duration-200">
+          <div className="bg-white p-8 rounded-[30px] max-w-md w-full mx-4 animate-in zoom-in-95 duration-200">
+            <h2 className="text-2xl font-light mb-2 text-center logo-text">Welcome to Confio!</h2>
+            <p className="text-sm text-gray-500 text-center mb-8">Please select your role to complete registration</p>
+
+            <div className="space-y-3">
+              <button
+                onClick={() => handleRoleSelection(UserRole.AUTHOR)}
+                className="w-full p-4 border border-[#2D2926]/10 rounded-2xl hover:bg-[#F2F1E8] transition-colors text-left"
+              >
+                <p className="font-semibold text-sm">Author</p>
+                <p className="text-xs text-gray-500">Submit and manage research papers</p>
+              </button>
+
+              <button
+                onClick={() => handleRoleSelection(UserRole.REVIEWER)}
+                className="w-full p-4 border border-[#2D2926]/10 rounded-2xl hover:bg-[#F2F1E8] transition-colors text-left"
+              >
+                <p className="font-semibold text-sm">Reviewer</p>
+                <p className="text-xs text-gray-500">Review and provide feedback on papers</p>
+              </button>
+
+              <button
+                onClick={() => handleRoleSelection(UserRole.ORGANIZER)}
+                className="w-full p-4 border border-[#2D2926]/10 rounded-2xl hover:bg-[#F2F1E8] transition-colors text-left"
+              >
+                <p className="font-semibold text-sm">Organizer</p>
+                <p className="text-xs text-gray-500">Create and manage conferences</p>
+              </button>
+            </div>
+
+            <button
+              onClick={() => {
+                setShowRoleModal(false);
+                setPendingGoogleCredential(null);
+              }}
+              className="w-full mt-6 py-3 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

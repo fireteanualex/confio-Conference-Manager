@@ -1,9 +1,9 @@
 
 import axios from 'axios';
-import { User, UserRole, Conference, Paper, Review, Organization, PaperStatus, OrgInvitation, InvitationStatus } from './types';
+import { User, UserRole, Conference, Paper, Review, Organization, PaperStatus, OrgInvitation, InvitationStatus, GoogleOAuthResponse } from './types';
 
-// API Base URL
-const API_URL = 'http://localhost:3001/api';
+// API Base URL - uses environment variable in production, localhost in development
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 // Axios instance with default config
 const api = axios.create({
@@ -71,6 +71,20 @@ class DB {
     } catch (error) {
       console.error('Email confirmation failed:', error);
       return false;
+    }
+  }
+
+  async loginWithGoogle(credential: string, role?: UserRole): Promise<User | GoogleOAuthResponse> {
+    try {
+      const response = await api.post('/auth/google', { credential, role });
+      return response.data;
+    } catch (error: any) {
+      console.error('Google login failed:', error);
+      // If the server returns needsRole, pass that info back
+      if (error.response?.data?.needsRole) {
+        return error.response.data as GoogleOAuthResponse;
+      }
+      throw new Error(error.response?.data?.error || 'Google authentication failed');
     }
   }
 

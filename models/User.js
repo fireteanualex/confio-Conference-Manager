@@ -20,7 +20,10 @@ const userSchema = new mongoose.Schema({
   },
   password_hash: {
     type: String,
-    required: true
+    required: function() {
+      // Password is required only if not using OAuth
+      return !this.googleId;
+    }
   },
   role: {
     type: String,
@@ -34,6 +37,17 @@ const userSchema = new mongoose.Schema({
   isConfirmed: {
     type: Boolean,
     default: false
+  },
+  // OAuth fields
+  googleId: {
+    type: String,
+    sparse: true,
+    index: true
+  },
+  authProvider: {
+    type: String,
+    enum: ['local', 'google'],
+    default: 'local'
   }
 }, {
   timestamps: true

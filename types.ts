@@ -30,6 +30,19 @@ export interface User {
   profilePicture?: string;
   password_hash?: string;
   isConfirmed: boolean;
+  googleId?: string;
+  authProvider?: 'local' | 'google';
+}
+
+export interface GoogleOAuthResponse {
+  needsRole?: boolean;
+  googleData?: {
+    email: string;
+    given_name: string;
+    family_name: string;
+    picture: string;
+  };
+  error?: string;
 }
 
 export interface Organization {
