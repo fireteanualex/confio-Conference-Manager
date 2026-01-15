@@ -97,18 +97,30 @@
 ```bash
 git clone https://github.com/fireteanualex/confio-Conference-Manager.git
 cd confio-Conference-Manager
+```
 <h3>2. Install Dependencies</h3>
+
+```bash
 npm install
+```
 <h3>3. Environment Setup</h3>
 <p>Create a <code>.env</code> file in the root directory:</p>
+
+```bash
 # Server Configuration
 PORT=3001
 MONGODB_URI=your_mongodb_connection_string
 
 # Frontend Configuration
 VITE_API_URL=http://localhost:3001/api
+```
+
 <h3>4. Running the Application</h3>
+
+```bash
 npm run dev
+```
+
 <hr />
 <h2>API Reference</h2>
 <ul>
@@ -126,6 +138,5 @@ npm run dev
 </ul>
 <hr />
 <div align="center">
-<p>Distributed under the MIT License.</p>
-<p>Maintained by <a href="https://github.com/fireteanualex">fireteanualex</a></p>
+<p>Maintained by <a href="https://github.com/fireteanualex">fireteanualex</a> and <a href="https://github.com/Stefannasd">Stefannasd</a></p>
 </div>
