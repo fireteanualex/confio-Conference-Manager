@@ -331,7 +331,9 @@ class DB {
       }
 
       const org = await this.getOrganizationById(conference.organization_id);
-      if (!org || !org.memberIds.includes(Number(reviewerId))) {
+      // Compare as strings to handle both numeric and ObjectId formats
+      const isMember = org && org.memberIds.some(memberId => String(memberId) === String(reviewerId));
+      if (!org || !isMember) {
         throw new Error("Reviewer is not a member of the conference organization");
       }
 
@@ -399,13 +401,25 @@ class DB {
     }
   }
 
-  async updateReview(reviewId: number | string, updates: Partial<Review>): Promise<Review | undefined> {
+  async updateReview(reviewId: number | string, updates: Partial<Review>, caller?: User): Promise<Review | undefined> {
     try {
+      // If caller is provided, verify they are a reviewer and own this review
+      if (caller) {
+        if (caller.role !== UserRole.REVIEWER) {
+          throw new Error("Unauthorized: Only Reviewers can update reviews.");
+        }
+        // Fetch the review to verify ownership
+        const reviews = await api.get('/reviews');
+        const review = reviews.data.find((r: Review) => String(r.id) === String(reviewId));
+        if (review && String(review.reviewer_id) !== String(caller.id)) {
+          throw new Error("Unauthorized: You can only edit your own reviews.");
+        }
+      }
       const response = await api.put(`/reviews/${reviewId}`, updates);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to update review:', error);
-      throw error;
+      throw new Error(error.message || 'Failed to update review');
     }
   }
 

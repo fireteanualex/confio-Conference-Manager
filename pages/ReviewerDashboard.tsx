@@ -46,9 +46,9 @@ const ReviewerDashboard: React.FC<{ user: User }> = ({ user }) => {
   const openReviewModal = (paper: Paper) => {
     setSelectedPaper(paper);
 
-    // Check if review already exists
+    // Check if review already exists (compare as strings for MongoDB ObjectId compatibility)
     const existingReview = reviews.find(
-      r => r.paper_id === paper.id && r.reviewer_id === user.id
+      r => String(r.paper_id) === String(paper.id) && String(r.reviewer_id) === String(user.id)
     );
 
     if (existingReview) {
@@ -73,12 +73,12 @@ const ReviewerDashboard: React.FC<{ user: User }> = ({ user }) => {
 
     try {
       const existingReview = reviews.find(
-        r => r.paper_id === selectedPaper.id && r.reviewer_id === user.id
+        r => String(r.paper_id) === String(selectedPaper.id) && String(r.reviewer_id) === String(user.id)
       );
 
       if (existingReview) {
         // Update existing review
-        await db.updateReview(existingReview.id, reviewForm);
+        await db.updateReview(existingReview.id, reviewForm, user);
       } else {
         // Create new review
         await db.createReview({
@@ -99,11 +99,11 @@ const ReviewerDashboard: React.FC<{ user: User }> = ({ user }) => {
   };
 
   const getConferenceForPaper = (paper: Paper) => {
-    return conferences.find(c => c.id === paper.conference_id);
+    return conferences.find(c => String(c.id) === String(paper.conference_id));
   };
 
   const getReviewForPaper = (paper: Paper) => {
-    return reviews.find(r => r.paper_id === paper.id && r.reviewer_id === user.id);
+    return reviews.find(r => String(r.paper_id) === String(paper.id) && String(r.reviewer_id) === String(user.id));
   };
 
   const getPapersByStatus = (status: PaperStatus) => {

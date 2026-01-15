@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { User, Conference, Paper, UserRole, PaperStatus } from '../types';
+import { User, Conference, Paper, UserRole, PaperStatus, Organization } from '../types';
 import { db } from '../db';
 
 const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
@@ -10,6 +10,7 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
   const [conf, setConf] = useState<Conference | undefined>();
   const [papers, setPapers] = useState<Paper[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [organization, setOrganization] = useState<Organization | null>(null);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -34,6 +35,14 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
     return allUsers.filter(u => {
       if (u.role !== UserRole.REVIEWER) return false;
 
+      // Check if reviewer is a member of the conference organization
+      if (organization) {
+        const isMember = organization.memberIds.some(
+          memberId => String(memberId) === String(u.id)
+        );
+        if (!isMember) return false;
+      }
+
       // Filter by search query
       const query = reviewerSearchQuery.toLowerCase();
       return (
@@ -42,7 +51,7 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
         u.email.toLowerCase().includes(query)
       );
     });
-  }, [allUsers, reviewerSearchQuery]);
+  }, [allUsers, reviewerSearchQuery, organization]);
 
   const attendees = React.useMemo(() => {
     return allUsers.filter(u =>
@@ -96,16 +105,19 @@ const ConferenceDetail: React.FC<{ user: User }> = ({ user }) => {
         end_time: conference.end_time || '17:00'
       });
 
-      const [conferencePapers, users] = await Promise.all([
+      const [conferencePapers, users, org] = await Promise.all([
         db.getPapersByConference(conference.id),
-        db.getUsers()
+        db.getUsers(),
+        conference.organization_id ? db.getOrganizationById(conference.organization_id) : Promise.resolve(null)
       ]);
 
       console.log('Loaded papers:', conferencePapers);
       console.log('Loaded users:', users);
+      console.log('Loaded organization:', org);
 
       setPapers(conferencePapers);
       setAllUsers(users);
+      setOrganization(org || null);
     } catch (error) {
       console.error('Failed to load conference details:', error);
       alert('Failed to load conference details. Please check the console for more information.');

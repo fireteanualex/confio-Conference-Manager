@@ -17,7 +17,8 @@ const ConferenceCard: React.FC<{ conf: Conference; user: User; onDelete: (e: Rea
     loadPaperCount();
   }, [conf.id]);
 
-  const attendeeCount = (conf.attendeeIds || []).length;
+  // Participant count includes attendees + the organizer
+  const attendeeCount = (conf.attendeeIds || []).length + 1;
   const isUpcoming = new Date(conf.start_date) > new Date();
 
   return (
