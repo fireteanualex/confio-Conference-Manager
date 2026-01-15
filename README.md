@@ -133,6 +133,7 @@ npm run dev
 <hr />
 <h2>Deployment</h2>
 <p>Configured for <b>Render.com</b>:</p>
+<p>Render.com Link: <a href="https://confio-frontend.onrender.com/">https://confio-frontend.onrender.com/</a></p>
 <ul>
 <li><b>Backend:</b> Deploy as a Web Service; connect MongoDB Atlas URI via Environment Variables.</li>
 <li><b>Frontend:</b> Deploy as a Static Site; use <code>npm run build</code>; point <code>VITE_API_URL</code> to backend service.</li>
