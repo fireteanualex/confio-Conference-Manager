@@ -1,3 +1,4 @@
+<div class="w-100"><img src="/assets/logos/CONFIO.png"></div>
 <div align="center">
   <h1>Confio - Conference Management Platform</h1>
   <p><b>A full-stack academic and professional event management system.</b></p>
